@@ -52,6 +52,7 @@ fun SettingsScreen(
     val syncFavorites by vm.syncFavorites.collectAsStateWithLifecycle()
 
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -212,11 +213,66 @@ fun SettingsScreen(
         Spacer(Modifier.height(14.dp))
 
         Text(
+            text = "关于",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+        )
+
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .clickable { showAbout = true }
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "BiliPod",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "版本、项目地址与检测更新",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "查看",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    modifier = Modifier.clickable { showAbout = true }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Text(
             text = "播放队列会在重启后恢复（恢复后停在原位等你自己点播放，不会偷偷开始下载直链）。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.padding(horizontal = 20.dp)
         )
+    }
+
+    if (showAbout) {
+        AboutDialog(onDismiss = { showAbout = false })
     }
 
     if (showClearHistoryConfirm) {

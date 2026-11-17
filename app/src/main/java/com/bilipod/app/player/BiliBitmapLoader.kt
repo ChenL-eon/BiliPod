@@ -61,24 +61,26 @@ class BiliBitmapLoader(private val client: OkHttpClient) : BitmapLoader {
             .build()
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                future.setException(e)
+                // 回调里任何异常都不能逃出这个线程：OkHttp 的 AsyncCall 对非 IOException 的 Throwable
+                // 会直接 rethrow，落到线程未捕获处理器上就是整个进程闪退。
+                // 无网时 DNS 解析失败正好走这条路径（实测 2026-11-17 于模拟器）。
+                runCatching { future.setException(e) }
             }
 
             override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    if (!it.isSuccessful) {
-                        // 403 之类的防盗链回包不是图片，别把错误页当图去解码
-                        future.setException(IOException("HTTP ${it.code}"))
-                        return
+                runCatching {
+                    response.use {
+                        if (!it.isSuccessful) {
+                            // 403 之类的防盗链回包不是图片，别把错误页当图去解码
+                            future.setException(IOException("HTTP ${it.code}"))
+                            return@use
+                        }
+                        val bytes = it.body?.bytes()
+                        val bitmap = bytes?.let { data -> decodeSampled(data) }
+                        if (bitmap != null) future.set(bitmap)
+                        else future.setException(IOException("decode failed"))
                     }
-                    val bytes = it.body?.bytes()
-                    val bitmap = bytes?.let { data -> decodeSampled(data) }
-                    if (bitmap != null) {
-                        future.set(bitmap)
-                    } else {
-                        future.setException(IOException("decode failed"))
-                    }
-                }
+                }.onFailure { runCatching { future.setException(it) } }
             }
         })
         return future
