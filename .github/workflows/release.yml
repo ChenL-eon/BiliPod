@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag 名，例如 v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: gradlew 可执行位
+        run: chmod +x ./gradlew
+
+      - name: 确定版本号
+        run: echo "REL_TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+
+      - name: 编译
+        run: ./gradlew assembleDebug --console=plain
+
+      - name: 重命名
+        run: mv app/build/outputs/apk/debug/app-debug.apk "BiliPod-$REL_TAG.apk"
+
+      - name: 建 Release 并挂包
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$REL_TAG" --generate-notes "BiliPod-$REL_TAG.apk"

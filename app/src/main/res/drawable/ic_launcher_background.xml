@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标底板：取 BiliPod logo 的蓝底纯色，避免启动器对渐变蒙版处理不一致 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#0FB2F2" />
+</shape>

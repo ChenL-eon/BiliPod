@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- 纯 Compose 应用，XML 主题只负责冷启动窗口底色，避免白/黑闪屏 -->
+    <style name="Theme.BiliPod" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFF6F8F8</item>
+        <item name="android:statusBarColor">#FFF6F8F8</item>
+        <item name="android:navigationBarColor">#FFF6F8F8</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <!-- API 27 才有这个属性；minSdk 26 的老设备上系统直接忽略，行为与不加一致 -->
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+</resources>

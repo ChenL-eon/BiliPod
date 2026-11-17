@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<script src="https://static.geetest.com/static/tools/gt.js"></script>
+<style>
+  /*
+   * 两点都是踩出来的：
+   * 1. body 上不要用 flex 居中 —— 极验的验证层是绝对定位注入到 body 的，
+   *    body 一旦是 flex 容器，尺寸会被改写，表现为"ready 了但画面空白"。
+   * 2. 必须锁死滚动 —— 页面一旦能滚，WebView 的触摸坐标和渲染位置就对不上，
+   *    表现为点"确认"没反应、点图上的字标记偏一百多像素。
+   */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    /* 透明底：页面铺在 Kotlin 的遮罩层上，视觉上只剩极验自己的面板 */
+    background: transparent;
+    font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  }
+  #tip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #74807E;
+    font-size: 14px;
+    text-align: center;
+    line-height: 1.6;
+    padding: 0 24px;
+  }
+</style>
+</head>
+<body>
+<div id="tip">正在加载人机验证…</div>
+<script>
+  var captchaInstance = null;
+  var reported = false;
+  var lastCloseTapAt = 0;
+
+  /**
+   * 给极验自己的"确认"按钮叠一层放大的透明热区。
+   * WebView 里触摸坐标和渲染位置有几像素到几十像素的偏差，直接点按钮常常点空；
+   * 热区比按钮四周各扩一圈，手指点偏了也能命中，命中后替用户按真正的确认。
+   */
+  var commitPad = null;
+
+  function ensureCommitPad() {
+    var btn = document.querySelector('.geetest_commit');
+    if (!btn) {
+      if (commitPad) { commitPad.remove(); commitPad = null; }
+      return;
+    }
+    var r = btn.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) { return; }
+    // 实测触摸落点比视觉位置偏上约 23 CSS px（WebView 的垂直比例和视图高度不完全一致），
+    // 所以上方多留 60、下方留 40，热区上沿落在图片和按钮之间的空白里，不会挡住图上的字
+    var PAD_TOP = 80;
+    var PAD_BOTTOM = 40;
+    if (!commitPad) {
+      commitPad = document.createElement('div');
+      commitPad.id = 'commit-pad';
+      commitPad.style.cssText =
+        'position:fixed;z-index:2147483647;background:transparent;';
+      commitPad.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var b = document.querySelector('.geetest_commit');
+        dbg('commit pad hit -> ' + (b ? 'click btn' : 'btn gone'));
+        if (b) { b.click(); }
+      });
+      document.body.appendChild(commitPad);
+    }
+    commitPad.style.left = (r.left) + 'px';
+    commitPad.style.top = (r.top - PAD_TOP) + 'px';
+    commitPad.style.width = r.width + 'px';
+    commitPad.style.height = (r.height + PAD_TOP + PAD_BOTTOM) + 'px';
+  }
+
+  setInterval(ensureCommitPad, 400);
+
+  // 页面铺满全屏（透明），点面板以外的区域就取消。
+  // 不用极验自己的 onClose：它点外面只是把面板 hide，并不会回调 onClose，
+  // 结果就是极验面板消失了、我们的遮罩还留着。这里在捕获阶段自己判。
+  document.addEventListener('click', function (e) {
+    // 只认用户真实手指：极验内部和我们的自动点击都会派发合成 click，不拦就一开面板就被关掉
+    if (!e.isTrusted) { return; }
+    var t = e.target;
+    if (!t || !t.closest) { return; }
+    // 记一下"用户点了面板上的 ×"，供 onClose 判定是主动关闭还是提交后的自动收起
+    if (t.closest('.geetest_close')) { lastCloseTapAt = Date.now(); }
+    if (t.id === 'commit-pad') { return; }
+    if (t.closest('.geetest_popup_box')) { return; }
+    // 只处理"面板外面那层空白"：幽灵层、body、html，以及加载/失败提示
+    if (!t.closest('.geetest_popup_ghost') && t !== document.body
+        && t !== document.documentElement && t.id !== 'tip') { return; }
+    dbg('tap outside panel -> close');
+    try { AndroidBridge.onClose(); } catch (err) {}
+  }, true);
+
+  function dbg(msg) {
+    try { if (window.AndroidBridge) { AndroidBridge.onDebug(msg); } } catch (e) {}
+  }
+
+  /**
+   * 由 Kotlin 在页面加载完成后调用，参数来自 B 站 x/passport-login/captcha。
+   * 极验 V3（gt + challenge）在这一步不校验来源域名，实测可直接在本地页初始化。
+   */
+  function initGeetestCaptcha(gt, challenge) {
+    var tip = document.getElementById('tip');
+    dbg('start, gt.js=' + (typeof initGeetest) + ', challenge=' + challenge.substring(0, 8));
+    try {
+      initGeetest({
+        gt: gt,
+        challenge: challenge,
+        offline: false,
+        new_captcha: true,
+        // float 是 V3 兼容性最好的形态：会渲染一个"点击验证"的按钮，点它才弹出验证框。
+        // popup + show() 在 WebView 里只留一条空面板（高度 0），实测不可用。
+        product: 'float',
+        // 页面现在是全屏的，面板宽度自己按屏宽算，避免贴边
+        width: Math.round(document.documentElement.clientWidth * 0.92),
+        lang: 'zh-cn',
+        https: true
+      }, function (captchaObj) {
+        captchaInstance = captchaObj;
+        dbg('callback fired');
+
+        captchaObj.onReady(function () {
+          dbg('ready');
+          if (tip) { tip.style.display = 'none'; }
+          if (typeof captchaObj.appendTo === 'function') {
+            captchaObj.appendTo(document.body);
+            dbg('appendTo ok');
+          }
+          // 自动点一下"点击验证"按钮，省掉用户多点一次
+          setTimeout(function () {
+            var trigger = document.querySelector('.geetest_radar_tip')
+              || document.querySelector('.geetest_wait')
+              || document.querySelector('.geetest_btn');
+            dbg('trigger=' + (trigger ? trigger.className : 'none')
+              + ' children=' + document.body.children.length);
+            if (trigger) {
+              trigger.click();
+              dbg('trigger clicked');
+            }
+          }, 500);
+        });
+
+        captchaObj.onSuccess(function () {
+          // 只回传一次：多次回调会让上层重复发起接口请求
+          if (reported) { return; }
+          reported = true;
+          var r = captchaObj.getValidate();
+          if (!r) {
+            AndroidBridge.onError('没取到验证结果');
+            return;
+          }
+          AndroidBridge.onResult(r.geetest_challenge, r.geetest_validate, r.geetest_seccode);
+        });
+
+        captchaObj.onError(function (e) {
+          dbg('onError ' + JSON.stringify(e));
+          AndroidBridge.onError((e && e.msg) ? e.msg : '极验加载失败');
+        });
+
+        captchaObj.onClose(function () {
+          // 极验在"提交成功"时也会先收掉自己的弹层再异步回调 onSuccess，
+          // 所以不能一律当成取消：最近点过面板上的 × 才算用户主动关闭，
+          // 其余情况交给 Kotlin 做延时软关闭，等 validate 回来。
+          var userClosed = (Date.now() - lastCloseTapAt) < 1200;
+          dbg('captcha onClose userClosed=' + userClosed);
+          if (userClosed) {
+            try { AndroidBridge.onClose(); } catch (err) {}
+          } else {
+            try { AndroidBridge.onSoftClose(); } catch (err) {}
+          }
+        });
+      });
+      dbg('init called');
+    } catch (err) {
+      dbg('throw ' + err);
+      if (tip) { tip.innerText = '人机验证初始化失败：' + err; }
+      AndroidBridge.onError('初始化失败：' + err);
+    }
+  }
+</script>
+</body>
+</html>
