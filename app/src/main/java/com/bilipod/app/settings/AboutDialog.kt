@@ -18,10 +18,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -116,10 +115,8 @@ internal object UpdateChecker {
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val versionName = remember { versionNameOf(context) }
     val versionText = remember { "$versionName（${versionCodeOf(context)}）" }
-    var state by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -150,51 +147,6 @@ fun AboutDialog(onDismiss: () -> Unit) {
                     valueColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                     onClick = { openUrl(context, PROJECT_URL) }
                 )
-
-                AboutRow(
-                    title = "检测更新",
-                    value = when (val s = state) {
-                        is UpdateState.Idle -> "检查"
-                        is UpdateState.Checking -> "检测中…"
-                        is UpdateState.NoRelease -> "尚未发布"
-                        is UpdateState.UpToDate -> "已是最新"
-                        is UpdateState.Available -> "有新版本 v${s.version}"
-                        is UpdateState.Failed -> "检测失败"
-                    },
-                    valueColor = when (state) {
-                        is UpdateState.Available -> MaterialTheme.colorScheme.primary
-                        is UpdateState.UpToDate -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-                        is UpdateState.Failed -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                        is UpdateState.NoRelease -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                        is UpdateState.Checking -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-                    },
-                    onClick = {
-                        when (val s = state) {
-                            // 已经知道有新版本，再点就直接去发布页，不再重复请求
-                            is UpdateState.Available -> openUrl(context, s.url)
-                            is UpdateState.Checking -> Unit
-                            else -> {
-                                state = UpdateState.Checking
-                                scope.launch { state = UpdateChecker.check(versionName) }
-                            }
-                        }
-                    }
-                )
-
-                // 说明单独一行，避免挤在右侧把状态文案压成省略号
-                val hint = when (val s = state) {
-                    is UpdateState.Failed -> s.reason
-                    is UpdateState.NoRelease -> "仓库还没有发布版本"
-                    else -> null
-                }
-                if (hint != null) {
-                    Text(
-                        text = hint,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                    )
-                }
 
                 Spacer(Modifier.height(16.dp))
                 Row(
@@ -246,7 +198,110 @@ private fun AboutRow(
     }
 }
 
-/** 应用内打开外部链接，没有浏览器时静默失败，不让"关于"面板崩掉 */
+/**
+ * 检测更新浮层：和"关于"分开成两个入口，一进来就自己查，不用再点一下。
+ * 结果只有一句话 + 一两个动作，别做成又一层菜单。
+ */
+@Composable
+fun UpdateDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val versionName = remember { versionNameOf(context) }
+    var state by remember { mutableStateOf<UpdateState>(UpdateState.Checking) }
+
+    LaunchedEffect(Unit) {
+        state = UpdateChecker.check(versionName)
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp
+        ) {
+            Column(modifier = Modifier.padding(22.dp)) {
+                Text(
+                    text = "检测更新",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "当前版本 $versionName",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                )
+
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                Spacer(Modifier.height(14.dp))
+
+                val headline = when (val s = state) {
+                    is UpdateState.Idle, is UpdateState.Checking -> "正在检查 GitHub 上的最新版本…"
+                    is UpdateState.NoRelease -> "还没有发布版本"
+                    is UpdateState.UpToDate -> "已经是最新版本"
+                    is UpdateState.Available -> "发现新版本 v${s.version}"
+                    is UpdateState.Failed -> "检测失败"
+                }
+                Text(
+                    text = headline,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = when (state) {
+                        is UpdateState.Available -> MaterialTheme.colorScheme.primary
+                        is UpdateState.UpToDate -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                    }
+                )
+
+                // 详情一行就够：失败给原因，没发版给说明，其余不啰嗦
+                val detail = when (val s = state) {
+                    is UpdateState.Failed -> s.reason
+                    is UpdateState.NoRelease -> "作者还没打过 release tag，仓库里也没有可下载的安装包"
+                    is UpdateState.Checking -> null
+                    else -> null
+                }
+                if (detail != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                    )
+                }
+
+                val available = state as? UpdateState.Available
+                if (available != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = "打开发布页",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable { openUrl(context, available.url) }
+                            .padding(vertical = 4.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Text(
+                        text = "关闭",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable(onClick = onDismiss)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 应用内打开外部链接，没有浏览器时静默失败，不让面板崩掉 */
 private fun openUrl(context: Context, url: String) {
     runCatching {
         context.startActivity(

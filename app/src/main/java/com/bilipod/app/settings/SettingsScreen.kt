@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,7 +55,9 @@ fun SettingsScreen(
 
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showUpdate by remember { mutableStateOf(false) }
 
+    // 标题固定，内容单独滚动：否则滚到"关于"时"设置"标题会顶到状态栏上
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -77,6 +81,11 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
         )
 
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+        ) {
         Text(
             text = "缓存上限",
             style = MaterialTheme.typography.titleSmall,
@@ -244,7 +253,7 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "版本、项目地址与检测更新",
+                        text = "版本与项目地址",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                         maxLines = 1,
@@ -261,6 +270,49 @@ fun SettingsScreen(
             }
         }
 
+        // 检测更新单独一张卡：它要联网、会失败、有结果，塞进"关于"里读起来别扭
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .clickable { showUpdate = true }
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "检测更新",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "到 GitHub Releases 看有没有新版本",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "检查",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    modifier = Modifier.clickable { showUpdate = true }
+                )
+            }
+        }
+
         Spacer(Modifier.height(14.dp))
 
         Text(
@@ -269,10 +321,15 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.padding(horizontal = 20.dp)
         )
+        }
     }
 
     if (showAbout) {
         AboutDialog(onDismiss = { showAbout = false })
+    }
+
+    if (showUpdate) {
+        UpdateDialog(onDismiss = { showUpdate = false })
     }
 
     if (showClearHistoryConfirm) {
