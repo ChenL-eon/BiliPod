@@ -73,7 +73,7 @@ class ContentRepository(private val client: BiliApiClient) {
             riskControlled -> AppResult.Failure(CODE_RISK_CONTROL, "搜索被风控，请稍后再试")
             !resp.isSuccess -> AppResult.Failure(resp.code, resp.errorText)
             else -> {
-                val list = resp.data?.result.orEmpty().mapNotNull { item ->
+                val mapped = resp.data?.result.orEmpty().mapNotNull { item ->
                     val bvid = item.bvid ?: return@mapNotNull null
                     Episode.video(
                         bvid = bvid,
@@ -85,8 +85,21 @@ class ContentRepository(private val client: BiliApiClient) {
                         durationSec = Formatters.parseClock(item.duration)
                     )
                 }
+                // 和首页推荐流、榜单一共用同一条时长下限：搜索是最容易被短视频刷屏的入口，
+                // 十分钟以下的听感太碎。durationSec=0 表示接口没给时长或解析失败，这种放行，
+                // 宁可漏进来一条短视频，也不要让想找的稿子整条搜不到。
+                val tooShort = mapped.count { it.durationSec in 1 until PODCAST_MIN_SECONDS }
+                val list = mapped.filter {
+                    it.durationSec == 0L || it.durationSec >= PODCAST_MIN_SECONDS
+                }
+                if (tooShort > 0) {
+                    android.util.Log.i(
+                        "ContentRepository",
+                        "search 「$keyword」 p$page 原始=${mapped.size} 时长不足=$tooShort 保留=${list.size}"
+                    )
+                }
                 // numPages 缺失（0）时退回"本页是否拉满"推断，和 space 接口同一套逻辑
-                val hasMore = (resp.data?.numPages ?: 0) > page || list.size >= SEARCH_PAGE_SIZE
+                val hasMore = (resp.data?.numPages ?: 0) > page || mapped.size >= SEARCH_PAGE_SIZE
                 AppResult.Success(PageResult(list, hasMore))
             }
         }
